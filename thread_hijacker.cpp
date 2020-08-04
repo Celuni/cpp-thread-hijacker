@@ -12,7 +12,7 @@ void thread_hijacker::execute_code( const std::vector< std::uint8_t >& code ) {
 	thread_handle_ = OpenThread( THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, find_thread( ) );
 
 	if ( !thread_handle_ )
-		throw std::exception( "thread_hijacer::execute_code: failed to get thread handle" );
+		throw std::exception( "thread_hijacker::execute_code: failed to get thread handle" );
 
 	std::vector< std::uint8_t > shellcode( std::size( code_prologue_ ) + code.size( ) + std::size( code_epilogue_ ) );
 	
@@ -23,24 +23,31 @@ void thread_hijacker::execute_code( const std::vector< std::uint8_t >& code ) {
 	if ( SuspendThread( thread_handle_ ) == -1 )
 		throw std::exception( "thread_hijacker::execute_code: failed to suspend thread" );
 
-	auto ctx = get_thread_context( );
+	try {
+		auto ctx = get_thread_context( );
 
-	ctx.Esp -= 4; // Reserve 4 bytes for return address
+		ctx.Esp -= 4; // Reserve 4 bytes for return address
 
-	// Write the return address onto the stack
-	WriteProcessMemory( process_handle_, LPVOID( ctx.Esp ), &ctx.Eip, sizeof( std::uint32_t ), nullptr );
+		// Write the return address onto the stack
+		WriteProcessMemory( process_handle_, LPVOID( ctx.Esp ), &ctx.Eip, sizeof( std::uint32_t ), nullptr );
 
-	auto code_flag = allocate_memory( sizeof( bool ), PAGE_READWRITE );
+		auto code_flag = allocate_memory( sizeof( bool ), PAGE_READWRITE );
 
-	// Write the code flag address into our shellcode
-	*reinterpret_cast< std::uint32_t* >( shellcode.data( ) + std::size( code_prologue_ ) + code.size( ) + 0x4 )  = code_flag;
+		// Write the code flag address into our shellcode
+		*reinterpret_cast< std::uint32_t* >( shellcode.data( ) + std::size( code_prologue_ ) + code.size( ) + 0x4 ) = code_flag;
 
-	ctx.Eip = allocate_memory( shellcode.size( ), PAGE_EXECUTE_READWRITE );
+		ctx.Eip = allocate_memory( shellcode.size( ), PAGE_EXECUTE_READWRITE );
 
-	// Write the shellcode into memory
-	WriteProcessMemory( process_handle_, LPVOID( ctx.Eip ), shellcode.data( ), shellcode.size( ), nullptr );
+		// Write the shellcode into memory
+		WriteProcessMemory( process_handle_, LPVOID( ctx.Eip ), shellcode.data( ), shellcode.size( ), nullptr );
 
-	set_thread_context( ctx );
+		set_thread_context( ctx );
+	} catch ( const std::exception& e ) {
+		// Resume the thread if any error occurs and re-throw the exception
+		ResumeThread( thread_handle_ );
+		
+		throw e;
+	}
 
 	if ( ResumeThread( thread_handle_ ) == -1 )
 		throw std::exception( "thread_hijacker::execute_code: failed to resume thread" );
